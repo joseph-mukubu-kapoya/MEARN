@@ -1,0 +1,513 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\geometry{hmargin=2cm, vmargin=2cm}
+
+\lstdefinelanguage{JavaScript}{
+  keywords={const, let, var, if, else, for, while, return, function, true, false, require, module, exports, async, await, new, number, try, catch, throw},
+  keywordstyle=\color{blue}\bfseries,
+  ndkeywords={class, export, boolean, throw, implements, import, this},
+  ndkeywordstyle=\color{teal}\bfseries,
+  identifierstyle=\color{black},
+  sensitive=false,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{green!60!black}\ttfamily,
+  stringstyle=\color{red}\ttfamily,
+  morestring=[b]',
+  morestring=[b]"
+}
+
+% Configuration de l'affichage du code avec support des accents
+\lstset{
+    language=JavaScript,
+    backgroundcolor=\color{black!5},
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=8pt,
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    extendedchars=true,
+    literate=
+      {é}{{\'e}}1
+      {è}{{\`e}}1
+      {ê}{{\^e}}1
+      {ë}{{\"e}}1
+      {à}{{\`a}}1
+      {â}{{\^a}}1
+      {î}{{\^i}}1
+      {ï}{{\"i}}1
+      {ô}{{\^o}}1
+      {û}{{\^u}}1
+      {ù}{{\`u}}1
+      {ç}{{\c{c}}}1
+}
+
+\title{\textbf{Compte-rendu du TP 3 : Connexion et Refactorisation de l'API Blog avec MongoDB Atlas et Mongoose}}
+\author{
+    Réalisé par : \textbf{JOSEPH MUKUBU KAPOYA} \\
+    \textit{5ème Datascience et IA, Groupe 1}
+}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{Introduction}
+Ce troisième atelier pratique marque le passage d'une persistance volatile en mémoire à une véritable persistance de données distribuée et sécurisée grâce à l'\textbf{ODM Mongoose} et à la base de données \textbf{MongoDB Atlas}. 
+
+Les objectifs pédagogiques et techniques de ce TP sont :
+\begin{itemize}
+    \item Sécuriser les secrets de configuration de l'application via des variables d'environnement (\texttt{.env} et bibliothèque \texttt{dotenv}).
+    \item Centraliser et fiabiliser la connexion asynchrone à la base distante dans \texttt{src/config/db.js}.
+    \item Définir des schémas et modèles stricts (\texttt{User} et \texttt{Article}) intégrant des validations automatiques (\textit{regex}, types, contraintes numériques, énumérations, \texttt{timestamps: true}).
+    \item Établir des relations référentielles NoSQL (\texttt{ObjectId} avec \texttt{ref: 'User'}) et exploiter la méthode \texttt{.populate()} pour récupérer les données jointes de l'auteur.
+    \item Démontrer la puissance du découplage \textbf{SoC} : remplacement complet du moteur de persistance sans modifier le routeur.
+    \item Traiter les contraintes d'intégrité relationnelle (interdiction de suppression d'utilisateurs avec articles) et gérer professionnellement les erreurs de format d'identifiant (\texttt{CastError}).
+\end{itemize}
+
+\section{Réponse rédigée et argumentée à l'encadré « Prédisez »}
+
+\subsection*{Problématique : Découplage architectural et substitution de persistance}
+\textbf{Question :} \textit{Pourquoi le passage d'un stockage en mémoire à une base de données MongoDB avec Mongoose n'a-t-il nécessité strictement aucune modification dans les routeurs (\texttt{routes/articleRoutes.js} et \texttt{routes/userRoutes.js}) ?}
+
+\textbf{Réponse argumentée :} \\
+Ce résultat découle directement de l'application rigoureuse du patron architectural \textbf{SoC (Separation of Concerns)} mis en place lors du TP 2. 
+\begin{enumerate}
+    \item \textbf{Étanchéité des responsabilités :} Le rôle unique d'un routeur Express est de faire correspondre un verbe HTTP (\texttt{GET}, \texttt{POST}, \texttt{PUT}, \texttt{DELETE}) et un chemin d'URL à un gestionnaire (\textit{handler}) du contrôleur. Le routeur ignore totalement la provenance ou la méthode de stockage des données (qu'il s'agisse d'un tableau en RAM, d'un fichier JSON, ou d'une base MongoDB Atlas distante).
+    \item \textbf{Stabilité du contrat d'interface :} La signature des fonctions de contrôleur (\texttt{(req, res) => \{ ... \}}) reste inchangée, même lorsqu'elles deviennent asynchrones (\texttt{async/await}). Le contrôleur encapsule toute la logique de requêtage Mongoose et renvoie des réponses HTTP au format JSON.
+    \item \textbf{Invariance pour le client :} Pour le consommateur externe (Postman, application front-end React), le contrat d'API (routes, codes HTTP, structure des payloads) est préservé, offrant ainsi une transition transparente sans aucune régression.
+\end{enumerate}
+
+\section{Captures d'Écran des Tests Postman}
+
+\subsection{Création d'un utilisateur valide}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{postmanTP3-1.png}
+    \caption{POST /api/users -- 201 Created (création utilisateur valide)}
+    \vspace{0.1cm}
+    \small \textit{Description :} Création d'un utilisateur \textbf{Aya Ben Salah} avec les champs \texttt{name}, \texttt{email}, \texttt{age}, \texttt{role}, \texttt{bio} et \texttt{phone}. Le serveur répond \textbf{201 Created} et retourne l'objet persisté en base avec son \texttt{\_id} MongoDB et les horodatages \texttt{createdAt} / \texttt{updatedAt} générés automatiquement par Mongoose (\texttt{timestamps: true}).
+\end{figure}
+
+\clearpage
+\subsection{Création d'un article avec authorId invalide}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{postmanTP3-2.png}
+    \caption{POST /api/articles -- 400 Bad Request (authorId invalide -- CastError)}
+    \vspace{0.1cm}
+    \small \textit{Description :} Tentative de création d'un article avec la chaîne littérale \texttt{"COLLEZ\_L\_ID\_UTILISATEUR\_ICI"} comme \texttt{authorId}. Ce n'est pas un \texttt{ObjectId} valide : Mongoose lève une \texttt{CastError} interceptée par le bloc \texttt{catch}, qui renvoie \textbf{400 Bad Request} avec le message \texttt{"Identifiant de ressource invalide (format ObjectId attendu)"}.
+\end{figure}
+
+\clearpage
+\subsection{Consultation des articles avec auteur peuplé}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{postmanTP3-3.png}
+    \caption{GET /api/articles -- 200 OK (populate auteur)}
+    \vspace{0.1cm}
+    \small \textit{Description :} Récupération de tous les articles. Grâce à \texttt{.populate('author', 'name email')}, le champ \texttt{author} n'est plus un simple \texttt{ObjectId} mais l'objet complet \texttt{\{\_id, name, email\}} de l'auteur. On vérifie ici que l'article \textit{"Maîtriser MongoDB Atlas \& Mongoose"} est bien lié à \textbf{Aya Ben Salah} (\texttt{aya@polytechnique.tn}).
+\end{figure}
+
+\clearpage
+\subsection{Tentative de doublon d'email}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{postmanTP3-4.png}
+    \caption{POST /api/users -- 409 Conflict (email déjà utilisé)}
+    \vspace{0.1cm}
+    \small \textit{Description :} Tentative de recréation du même utilisateur avec l'adresse \texttt{aya@polytechnique.tn} déjà présente en base. Le contrôleur détecte le doublon via \texttt{User.findOne(\{email\})} et renvoie \textbf{409 Conflict} avec le message \texttt{"Cet email est deja utilise"}, sans déclencher d'erreur 500 ni de doublons en base.
+\end{figure}
+
+\clearpage
+\subsection{Gestion des identifiants invalides -- Exercice 2}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{postmanTP3-5.png}
+    \caption{GET /api/articles/abc -- 400 Bad Request (CastError ObjectId)}
+    \vspace{0.1cm}
+    \small \textit{Description :} Appel sur \texttt{GET /api/articles/abc} avec un identifiant non hexadécimal. Mongoose tente de convertir \texttt{"abc"} en \texttt{ObjectId} et lève une \texttt{CastError}. Le bloc \texttt{catch} l'intercepte et retourne \textbf{400 Bad Request} avec \texttt{"Identifiant de ressource invalide (format ObjectId attendu)"} au lieu d'une erreur \textbf{500 Internal Server Error}.
+\end{figure}
+
+\clearpage
+\subsection{Intégrité relationnelle : suppression bloquée -- Exercice 1}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{postmanTP3-6.png}
+    \caption{DELETE /api/users/:id -- 400 Bad Request (identifiant ObjectId invalide)}
+    \vspace{0.1cm}
+    \small \textit{Description :} Tentative de suppression avec l'identifiant littéral \texttt{"COLLEZ\_L\_ID\_UTILISATEUR"} (non ObjectId valide). Le serveur renvoie \textbf{400 Bad Request} avec le message \texttt{"Identifiant de ressource invalide (format ObjectId attendu)"}. Dans un scénario réel avec un ObjectId valide appartenant à un utilisateur ayant des articles, \texttt{deleteUser} vérifie d'abord \texttt{Article.findOne(\{author: id\})} et bloque la suppression pour préserver l'intégrité référentielle.
+\end{figure}
+
+\newpage
+\section{Code Source Intégral du Projet}
+
+\subsection{Configuration de l'environnement (\texttt{.env})}
+\begin{lstlisting}
+PORT=3000
+MONGODB_URI=mongodb+srv://admin_mern:PolyMern2026!@cluster0.xxxxx.mongodb.net/blogDB?retryWrites=true&w=majority
+\end{lstlisting}
+
+\subsection{Centralisation de la connexion : \texttt{src/config/db.js}}
+\begin{lstlisting}
+const mongoose = require('mongoose');
+
+async function connectDB(uri) {
+  if (!uri) {
+    throw new Error("L'URI MongoDB est manquant dans les variables d'environnement (.env)");
+  }
+  await mongoose.connect(uri, {
+    autoIndex: true // Genere automatiquement les index uniques en developpement
+  });
+  console.log('Connexion a MongoDB Atlas reussie avec succes !');
+}
+
+module.exports = connectDB;
+\end{lstlisting}
+
+\subsection{Point d'entrée du serveur : \texttt{src/server.js}}
+\begin{lstlisting}
+const express = require('express');
+const dotenv = require('dotenv');
+const connectDB = require('./config/db');
+const articleRoutes = require('./routes/articleRoutes');
+const userRoutes = require('./routes/userRoutes');
+
+// Chargement des variables d'environnement (.env)
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware pour parser le corps des requetes en JSON
+app.use(express.json());
+
+// Montage des routeurs modulaires
+app.use('/api/articles', articleRoutes);
+app.use('/api/users', userRoutes);
+
+// Connexion asynchrone a MongoDB Atlas puis demarrage de l'ecoute
+(async () => {
+  try {
+    // 1. Etablissement de la connexion distante
+    await connectDB(process.env.MONGODB_URI);
+
+    // 2. Demarrage de l'ecoute du serveur HTTP
+    app.listen(PORT, () => {
+      console.log(`Serveur MERN en ecoute sur http://localhost:${PORT}`);
+    });
+  } catch (err) {
+    console.error('Erreur critique de demarrage du serveur :', err.message);
+    process.exit(1);
+  }
+})();
+\end{lstlisting}
+
+\subsection{Modèle Utilisateur avec contraintes avancées : \texttt{src/models/userModel.js}}
+\begin{lstlisting}
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: [true, 'Le nom est obligatoire'],
+      trim: true
+    },
+    email: {
+      type: String,
+      required: [true, "L'email est obligatoire"],
+      unique: true,
+      lowercase: true,
+      trim: true,
+      match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Format d'email invalide (ex: aya@polytechnique.tn)"]
+    },
+    age: {
+      type: Number,
+      min: [4, "L'age minimum autorise est de 4 ans"]
+    },
+    role: {
+      type: String,
+      enum: {
+        values: ['user', 'admin'],
+        message: "{VALUE} n'est pas un role autorise"
+      },
+      default: 'user'
+    },
+    // Exercice 1 : Champs enrichis avec validations avancees
+    bio: {
+      type: String,
+      maxlength: [200, 'La biographie ne peut pas depasser 200 caracteres']
+    },
+    phone: {
+      type: String,
+      match: [/^\d{8}$/, 'Numero de 8 chiffres requis']
+    }
+  },
+  { timestamps: true } // Injection automatique de createdAt et updatedAt
+);
+
+module.exports = mongoose.model('User', userSchema);
+\end{lstlisting}
+
+\subsection{Modèle Article avec relation NoSQL : \texttt{src/models/articleModel.js}}
+\begin{lstlisting}
+const mongoose = require('mongoose');
+
+const articleSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
+      required: [true, 'Le titre est obligatoire'],
+      trim: true
+    },
+    content: {
+      type: String,
+      required: [true, 'Le contenu est obligatoire']
+    },
+    author: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: [true, "L'auteur (authorId) est obligatoire"]
+    }
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('Article', articleSchema);
+\end{lstlisting}
+
+\subsection{Contrôleur Utilisateurs : \texttt{src/controllers/userController.js}}
+\begin{lstlisting}
+const User = require('../models/userModel');
+const Article = require('../models/articleModel');
+
+// 1. Creer un nouvel utilisateur (POST /api/users)
+const createUser = async (req, res) => {
+  try {
+    const { name, email, age, role, bio, phone } = req.body;
+    if (!name || !email) {
+      return res.status(400).json({ message: "Le nom et l'email sont requis" });
+    }
+    // Verification de doublon d'email
+    const exists = await User.findOne({ email });
+    if (exists) {
+      return res.status(409).json({ message: 'Cet email est deja utilise' });
+    }
+    const user = await User.create({ name, email, age, role, bio, phone });
+    res.status(201).json(user);
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 2. Obtenir tous les utilisateurs (GET /api/users)
+const getUsers = async (req, res) => {
+  try {
+    const { role } = req.query;
+    const filter = role ? { role } : {};
+    const users = await User.find(filter);
+    res.status(200).json(users);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 3. Obtenir un utilisateur par ID avec gestion CastError (GET /api/users/:id)
+const getUserById = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouve' });
+    }
+    res.status(200).json(user);
+  } catch (err) {
+    // Exercice 2 : Interception CastError
+    if (err.name === 'CastError') {
+      return res.status(400).json({ message: 'Identifiant de ressource invalide (format ObjectId attendu)' });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 4. Supprimer un utilisateur avec controle d'integrite relationnelle (DELETE /api/users/:id)
+const deleteUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouve' });
+    }
+
+    // Verification d'integrite relationnelle (Exercice 1)
+    const hasArticles = await Article.findOne({ author: req.params.id });
+    if (hasArticles) {
+      return res.status(400).json({ message: "Impossible de supprimer un utilisateur ayant des articles publies" });
+    }
+
+    await User.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Utilisateur supprime avec succes', id: req.params.id });
+  } catch (err) {
+    // Exercice 2 : Interception CastError
+    if (err.name === 'CastError') {
+      return res.status(400).json({ message: 'Identifiant de ressource invalide (format ObjectId attendu)' });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+module.exports = { createUser, getUsers, getUserById, deleteUser };
+\end{lstlisting}
+
+\subsection{Contrôleur Articles : \texttt{src/controllers/articleController.js}}
+\begin{lstlisting}
+const Article = require('../models/articleModel');
+const User = require('../models/userModel');
+
+// 1. Recuperer tous les articles avec l'auteur peuple via .populate()
+const getAllArticles = async (req, res) => {
+  try {
+    const articles = await Article.find().populate('author', 'name email');
+    res.status(200).json(articles);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 2. Creer un nouvel article relie a un auteur
+const createArticle = async (req, res) => {
+  try {
+    const { title, content, authorId } = req.body;
+    if (!title || !content || !authorId) {
+      return res.status(400).json({ message: 'title, content et authorId sont obligatoires' });
+    }
+    // Verifier l'existence reelle de l'auteur
+    const author = await User.findById(authorId);
+    if (!author) {
+      return res.status(404).json({ message: 'Auteur non trouve (identifiant authorId invalide)' });
+    }
+    const newArticle = await Article.create({ title, content, author: authorId });
+    const populatedArticle = await newArticle.populate('author', 'name email');
+    res.status(201).json(populatedArticle);
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(400).json({ message: 'Identifiant de ressource invalide (format ObjectId attendu)' });
+    }
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 3. Recuperer un article par ID (Exercice 2)
+const getArticleById = async (req, res) => {
+  try {
+    const article = await Article.findById(req.params.id).populate('author', 'name email');
+    if (!article) {
+      return res.status(404).json({ message: 'Article non trouve' });
+    }
+    res.status(200).json(article);
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(400).json({ message: 'Identifiant de ressource invalide (format ObjectId attendu)' });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 4. Mettre a jour un article
+const updateArticle = async (req, res) => {
+  try {
+    const article = await Article.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+    if (!article) {
+      return res.status(404).json({ message: 'Article introuvable pour la mise a jour' });
+    }
+    const populated = await article.populate('author', 'name email');
+    res.status(200).json(populated);
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(400).json({ message: 'Identifiant de ressource invalide (format ObjectId attendu)' });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 5. Supprimer un article
+const deleteArticle = async (req, res) => {
+  try {
+    const article = await Article.findByIdAndDelete(req.params.id);
+    if (!article) {
+      return res.status(404).json({ message: 'Article introuvable pour la suppression' });
+    }
+    res.status(200).json({ message: 'Article supprime avec succes', id: req.params.id });
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(400).json({ message: 'Identifiant de ressource invalide (format ObjectId attendu)' });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+module.exports = { getAllArticles, createArticle, getArticleById, updateArticle, deleteArticle };
+\end{lstlisting}
+
+\subsection{Routeurs Express découplés : \texttt{src/routes/userRoutes.js} et \texttt{src/routes/articleRoutes.js}}
+\begin{lstlisting}
+// src/routes/userRoutes.js
+const express = require('express');
+const router = express.Router();
+const userController = require('../controllers/userController');
+
+router.get('/', userController.getUsers);
+router.get('/:id', userController.getUserById);
+router.post('/', userController.createUser);
+router.delete('/:id', userController.deleteUser);
+
+module.exports = router;
+\end{lstlisting}
+
+\begin{lstlisting}
+// src/routes/articleRoutes.js
+const express = require('express');
+const router = express.Router();
+const articleController = require('../controllers/articleController');
+
+router.get('/', articleController.getAllArticles);
+router.get('/:id', articleController.getArticleById);
+router.post('/', articleController.createArticle);
+router.put('/:id', articleController.updateArticle);
+router.delete('/:id', articleController.deleteArticle);
+
+module.exports = router;
+\end{lstlisting}
+
+\section*{Conclusion}
+Ce TP 3 concrétise la puissance de l'écosystème MERN en combinant l'architecture modulaire SoC, Express, Mongoose et MongoDB. Les données sont validées en amont par les schémas Mongoose, les relations sont modélisées et peuplées élégamment avec \texttt{.populate()}, et les erreurs de cast et d'intégrité sont gérées avec professionnalisme. L'API est robuste, extensible et prête pour un déploiement en production.
+
+\end{document}
